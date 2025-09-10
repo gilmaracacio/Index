@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Rodovias e Municípios - Mato Grosso</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+html, body { margin:0; padding:0; height:100%; font-family: Arial,sans-serif; background:#f5f5f5; overflow-x:hidden; }
+#header { width:100%; background:#fff; padding:12px 20px; text-align:center; font-size:18px; font-weight:bold; box-shadow:0 2px 6px rgba(0,0,0,0.1); position:relative; }
+#map { width:100%; height:calc(100% - 60px); }
+.search-box { position:absolute; top:72px; left:50px; background:white; padding:8px 12px; border-radius:8px; box-shadow:0 2px 6px rgba(0,0,0,0.25); z-index:1000; display:flex; gap:6px; align-items:center; }
+.search-box input { border:1px solid #ccc; border-radius:6px; padding:4px 8px; outline:none; min-width:180px; }
+.search-box button { background:#0078ff; color:white; border:none; border-radius:6px; padding:4px 10px; cursor:pointer; }
+.search-box button:hover { background:#005fcc; }
+.legend { line-height:18px; color:#333; background:white; padding:8px; border-radius:6px; box-shadow:0 2px 6px rgba(0,0,0,0.25); font-size:13px; }
+.legend-line { width:30px; height:4px; display:inline-block; margin-right:6px; border-radius:2px; }
+</style>
+</head>
+<body>
+
+<div id="header">Rodovias e Municípios - Mato Grosso</div>
+
+<div class="search-box">
+  <input type="text" id="searchInput" placeholder="Digite o vl_codigo..." list="vlCodigoDisponiveis">
+  <datalist id="vlCodigoDisponiveis"></datalist>
+  <button onclick="buscarRegistro()">Buscar</button>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// --- BaseMap ---
+const map = L.map('map').setView([-14.2350, -51.9253],5);
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:22, attribution:'&copy; OpenStreetMap'});
+const positron = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{maxZoom:22, attribution:'&copy; CartoDB'});
+const googleHybrid = L.tileLayer('http://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',{subdomains:['mt0','mt1','mt2','mt3'], attribution:'Google', maxZoom:22});
+const baseMaps = { "OpenStreetMap": osm, "CartoDB (Cinza)": positron, "Google Híbrido": googleHybrid };
+osm.addTo(map);
+
+// --- OverlayMaps ---
+const overlayMaps = {};
+
+// --- Rodovias ---
+const tipoColors = { "Estadual":"#1f78b4", "Federal":"#e31a1c" };
+const typeLayers = {}; Object.keys(tipoColors).forEach(t=>{ typeLayers[t]=L.layerGroup(); overlayMaps[t]=typeLayers[t]; });
+
+const geojsonUrl = "https://raw.githubusercontent.com/gilmaracacio/GSA/main/Rodovias.geojson";
+const lineMap = {}; const datalist = document.getElementById("vlCodigoDisponiveis");
+let highlightedLayer = null;
+
+function resetHighlight(){
+  if(highlightedLayer){
+    const tOld = highlightedLayer.feature.properties.tipo;
+    highlightedLayer.setStyle({color:tipoColors[tOld],weight:3,opacity:0.8});
+    highlightedLayer = null;
+  }
+}
+
+function buscarRegistro(){
+  const vl_codigo = document.getElementById("searchInput").value.trim();
+  if(lineMap[vl_codigo]){
+    resetHighlight();
+    highlightedLayer = lineMap[vl_codigo];
+    highlightedLayer.setStyle({color:"#fffd00",weight:8,opacity:1});
+    map.fitBounds(highlightedLayer.getBounds());
+    highlightedLayer.openPopup();
+  }else{ alert("Registro não encontrado!"); }
+}
+
+// Carregar rodovias
+fetch(geojsonUrl)
+.then(res=>res.json())
+.then(data=>{
+  L.geoJSON(data,{
+    style: f=>{ const t=f.properties.tipo; return {color:tipoColors[t]||"#999",weight:3,opacity:0.8}; },
+    onEachFeature: (f,l)=>{
+      const p=f.properties;
+      l.bindPopup(`<b>vl_br:</b> ${p.vl_br}<br><b>Tipo:</b> ${p.tipo}<br><b>vl_codigo:</b> ${p.vl_codigo}`);
+      typeLayers[p.tipo]?.addLayer(l);
+      lineMap[p.vl_codigo]=l;
+      const opt=document.createElement("option"); opt.value=p.vl_codigo; datalist.appendChild(opt);
+      l.on('popupopen',()=>{ resetHighlight(); highlightedLayer=l; highlightedLayer.setStyle({color:"#fffd00",weight:8,opacity:1}); });
+    }
+  });
+});
+
+// --- Municípios MT ---
+const mtMunicipiosUrl = "https://servicodados.ibge.gov.br/api/v4/malhas/estados/51?formato=application/vnd.geo+json&qualidade=maxima&intrarregiao=municipio";
+let municipiosLayer = L.layerGroup(); overlayMaps["Municípios MT"] = municipiosLayer;
+
+fetch(mtMunicipiosUrl)
+.then(res=>res.json())
+.then(data=>{
+  municipiosLayer = L.geoJSON(data,{
+    style:{color:"#006400", weight:1, fillColor:"#90ee90", fillOpacity:0.2, opacity:0.5},
+    onEachFeature:(f,l)=>{ l.bindPopup(`<b>Município:</b> ${f.properties.nome}<br><b>Código IBGE:</b> ${f.properties.codarea}`); }
+  });
+  overlayMaps["Municípios MT"] = municipiosLayer;
+  municipiosLayer.addTo(map);
+});
+
+// --- Controle de camadas ---
+L.control.layers(baseMaps, overlayMaps, {collapsed:false}).addTo(map);
+
+// --- Legenda interativa ---
+const legendControl=L.control({position:'bottomleft'});
+legendControl.onAdd=map=>{
+  const div=L.DomUtil.create('div','legend');
+  div.innerHTML='<strong>Legenda:</strong><br>';
+
+  // Rodovias
+  Object.keys(tipoColors).forEach(t=>{
+    const label=document.createElement("label");
+    label.style.display='flex'; label.style.alignItems='center'; label.style.gap='6px';
+    label.innerHTML=`<input type="checkbox" checked data-type="${t}"> <div class="legend-line" style="background:${tipoColors[t]}"></div> ${t}`;
+    div.appendChild(label);
+  });
+
+  // Municípios
+  const munLabel=document.createElement("label");
+  munLabel.style.display='flex'; munLabel.style.alignItems='center'; munLabel.style.gap='6px';
+  munLabel.innerHTML=`<input type="checkbox" checked data-type="Municípios MT"> <div class="legend-line" style="background:#90ee90"></div> Municípios MT`;
+  div.appendChild(munLabel);
+
+  L.DomEvent.disableClickPropagation(div);
+  return div;
+};
+legendControl.addTo(map);
+
+// --- Checkbox toggle ---
+document.addEventListener('change',function(e){
+  if(e.target && e.target.tagName==='INPUT' && e.target.dataset.type){
+    const t = e.target.dataset.type;
+    if(t === "Municípios MT"){
+      e.target.checked ? map.addLayer(overlayMaps[t]) : map.removeLayer(overlayMaps[t]);
+    } else {
+      e.target.checked ? map.addLayer(typeLayers[t]) : map.removeLayer(typeLayers[t]);
+    }
+  }
+});
+</script>
+</body>
+</html>
